@@ -117,12 +117,29 @@ class Docurium
   end
 
   def generate_doc_for(version)
-    index = Rugged::Index.new
-    read_subtree(index, version, option_version(version, 'input', ''))
+    doc_tree = @repo.branches[@options['branch']].target.tree
+    js_file = doc_tree.path("#{version}.json") rescue nil
+    ex_tree = doc_tree.path("ex/#{version}") rescue nil
+    if @cli_options[:'only-missing'] and version != 'HEAD' and js_file
+      puts "Reusing built documentation for #{version}"
+      data = JSON.parse(@repo.lookup(js_file[:oid]).content, {:symbolize_names => true})
+      examples = []
+      @repo.lookup(ex_tree[:oid]).walk_blobs do |root, entry|
+        oid = entry[:oid]
+        path = entry[:name]
+        path = File.join(root, entry[:name]) unless root.empty?
+        examples << [path, entry[:oid]]
+      end unless ex_tree.nil?
 
-    data = parse_headers(index, version)
-    examples = format_examples!(data, version)
-    [data, examples]
+      [data, examples]
+    else
+      index = Rugged::Index.new
+      read_subtree(index, version, option_version(version, 'input', ''))
+
+      data = parse_headers(index, version)
+      examples = format_examples!(data, version)
+      [data, examples]
+    end
   end
 
   def process_project(versions)
@@ -143,6 +160,10 @@ class Docurium
     end) do |version, index|
       puts "Generating documentation for #{version} [#{index}/#{nversions}]"
       generate_doc_for(version)
+    rescue Exception => e
+      puts "\t version #{index}: generation failed: #{e}"
+      puts e.backtrace
+      []
     end
   end
 
